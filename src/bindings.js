@@ -88,10 +88,15 @@ export function writeShimIndex(data = loadBindings()) {
       // "default" is the live login, so it resolves to ~/.claude -- which is
       // where the shim would have left Claude Code looking anyway. Writing the
       // row anyway keeps the binding explicit and survivable.
+      isDefault: isDefaultName(value.profile),
       dir: isDefaultName(value.profile) ? defaultProfileDir() : storeDir(value.profile),
       profile: value.profile,
     }))
-    .filter((row) => fs.existsSync(row.dir))
+    // The existence check is there to drop bindings whose store was deleted.
+    // "default" is not a store: it cannot be deleted, and ~/.claude is created
+    // by Claude Code on demand, so it must never be filtered out -- on a machine
+    // where ~/.claude does not exist yet, that silently dropped the binding.
+    .filter((row) => row.isDefault || fs.existsSync(row.dir))
     .sort((a, b) => b.key.length - a.key.length);
 
   const body = rows.map((r) => `${r.key}\t${r.dir}\t${r.profile}`).join('\n');
