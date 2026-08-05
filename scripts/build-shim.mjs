@@ -72,9 +72,19 @@ export function buildShim({ out = shimExe() } = {}) {
   );
 
   if (result.status !== 0) {
-    throw new Error(
-      `csc failed (${result.status}):\n${result.stdout || ''}${result.stderr || ''}`.trim(),
-    );
+    const output = `${result.stdout || ''}${result.stderr || ''}`.trim();
+    // The shim stays alive as the parent of every session it launches, so the
+    // exe is locked for as long as any Claude window is open. csc reports that
+    // as CS0016, which reads like a broken toolchain rather than "close Claude".
+    if (output.includes('CS0016')) {
+      throw new Error(
+        `cannot replace ${out} while it is in use.\n` +
+          '  The shim is the parent process of every running Claude session, so it stays\n' +
+          '  locked until they all exit. Close your Claude conversations (or the VS Code\n' +
+          '  windows running them) and try again.',
+      );
+    }
+    throw new Error(`csc failed (${result.status}):\n${output}`);
   }
 
   return { out, csc, bytes: fs.statSync(out).size };
