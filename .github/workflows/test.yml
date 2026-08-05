@@ -36,6 +36,9 @@ jobs:
             exit 1
           }
 
+      # `npm test` is bare `node --test`, which discovers test files itself.
+      # Do not pass a glob: the runner only understands glob patterns from Node
+      # 21 onward, so `node --test "test/*.test.js"` fails on the Node 20 leg.
       - name: Test
         run: npm test
 

@@ -28,7 +28,7 @@
     "build:icon": "node scripts/make-icon.mjs",
     "build:social": "node scripts/make-social.mjs",
     "install:extension": "node scripts/install-extension.mjs",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test"
   },
   "files": [
     "bin",
