@@ -21,6 +21,7 @@ ${c.dim('Each project gets its own account. Binding never modifies ~/.claude.')}
 ${c.bold('Setup')}
   ccp setup                 build the shim and point VS Code at it
   ccp doctor                check every assumption this tool makes
+  ccp doctor --fix          repair what can be repaired safely
   ccp teardown              remove the VS Code wrapper setting
 
 ${c.bold('Accounts')}
@@ -211,7 +212,7 @@ try {
       break;
 
     case 'doctor':
-      doctor();
+      doctor({ fix: flag('fix') });
       break;
 
     case 'daemon': {

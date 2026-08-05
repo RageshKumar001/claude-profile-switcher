@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
+import { buildShim } from '../../scripts/build-shim.mjs';
 import { authStatus, resolveClaudeBinary } from '../claude-cli.js';
-import { loadBindings, resolveBinding } from '../bindings.js';
+import { loadBindings, removeBinding, resolveBinding, writeShimIndex } from '../bindings.js';
+import { isSealed, unsealIfNeeded } from './seal.js';
 import { readJson } from '../json-file.js';
 import { readCredentials } from '../credentials.js';
 import {
@@ -16,7 +18,7 @@ import {
 import { defaultProfileDir, defaultProfileInfo, isDefaultName } from '../default-profile.js';
 import { listProfiles, profileExists } from '../store.js';
 import { c, healthLabel, sym } from '../ui.js';
-import { candidateSettingsPaths, readSetting } from '../vscode-settings.js';
+import { candidateSettingsPaths, readSetting, writeSetting } from '../vscode-settings.js';
 
 const WRAPPER_KEY = 'claudeCode.claudeProcessWrapper';
 
@@ -27,9 +29,14 @@ const WRAPPER_KEY = 'claudeCode.claudeProcessWrapper';
  * A Claude Code update can invalidate any of it, so doctor exists to say
  * exactly what changed rather than let the tool corrupt state quietly.
  */
-export function doctor() {
+export function doctor({ fix = false } = {}) {
   const results = [];
-  const add = (level, label, detail) => results.push({ level, label, detail });
+  /**
+   * `repair` is what makes a finding fixable. It must be safe to run twice and
+   * must only ever repair ccp's own state -- never ~/.claude, and never a
+   * profile's credentials.
+   */
+  const add = (level, label, detail, repair) => results.push({ level, label, detail, repair });
 
   // --- Claude Code itself -------------------------------------------------
   let binary;
@@ -104,7 +111,10 @@ export function doctor() {
   if (fs.existsSync(shimExe())) {
     add('ok', 'shim', `${shimExe()} ${c.dim(`(${fs.statSync(shimExe()).size} bytes)`)}`);
   } else {
-    add('fail', 'shim', `not built -- run ${c.cyan('ccp setup')}`);
+    add('fail', 'shim', `not built -- run ${c.cyan('ccp setup')}`, () => {
+      const built = buildShim();
+      return `rebuilt (${built.bytes} bytes)`;
+    });
   }
 
   const editors = candidateSettingsPaths();
@@ -113,9 +123,18 @@ export function doctor() {
   }
   for (const { flavour, file } of editors) {
     const wrapper = readSetting(file, WRAPPER_KEY);
-    if (wrapper === shimExe()) add('ok', `vs code (${flavour})`, 'wrapper configured');
-    else if (!wrapper) add('warn', `vs code (${flavour})`, `wrapper not set -- run ${c.cyan('ccp setup')}`);
-    else add('warn', `vs code (${flavour})`, `wrapper points elsewhere: ${wrapper}`);
+    if (wrapper === shimExe()) {
+      add('ok', `vs code (${flavour})`, 'wrapper configured');
+    } else if (!wrapper) {
+      add('warn', `vs code (${flavour})`, `wrapper not set -- run ${c.cyan('ccp setup')}`, () => {
+        const result = writeSetting(file, WRAPPER_KEY, shimExe());
+        return `wrapper set${result.backup ? ` (backup: ${result.backup})` : ''}`;
+      });
+    } else {
+      // Someone else's wrapper. Replacing it could break whatever put it there,
+      // so this is reported but deliberately not repaired.
+      add('warn', `vs code (${flavour})`, `wrapper points elsewhere: ${wrapper}`);
+    }
   }
 
   // --- Bindings -------------------------------------------------------------
@@ -123,7 +142,9 @@ export function doctor() {
   const bindingCount = Object.keys(bindings).length;
   const indexExists = fs.existsSync(bindingsIndex());
   if (!indexExists && bindingCount) {
-    add('fail', 'bindings index', `missing -- run ${c.cyan('ccp setup')} to regenerate`);
+    add('fail', 'bindings index', `missing -- run ${c.cyan('ccp setup')} to regenerate`, () => {
+      return `${writeShimIndex()} row(s) written`;
+    });
   } else {
     const indexLines = indexExists
       ? fs.readFileSync(bindingsIndex(), 'utf8').split('\n').filter(Boolean).length
@@ -133,6 +154,7 @@ export function doctor() {
         'warn',
         'bindings index',
         `${bindingCount} binding(s) but ${indexLines} indexed -- some profiles may be missing`,
+        () => `${writeShimIndex()} row(s) rewritten`,
       );
     } else {
       add('ok', 'bindings index', `${bindingCount} binding(s)`);
@@ -142,7 +164,31 @@ export function doctor() {
   for (const [key, value] of Object.entries(bindings)) {
     if (isDefaultName(value.profile)) continue; // ~/.claude, checked above
     if (!profileExists(value.profile)) {
-      add('fail', 'binding', `${value.displayPath ?? key} -> missing profile "${value.profile}"`);
+      add(
+        'fail',
+        'binding',
+        `${value.displayPath ?? key} -> missing profile "${value.profile}"`,
+        // The profile is gone, so the binding can only ever resolve to nothing.
+        // Dropping it is the honest repair; the project falls back to default.
+        () => {
+          removeBinding(value.displayPath ?? key);
+          return `binding removed -- that project now uses the default account`;
+        },
+      );
+      continue;
+    }
+    // The shim reads the credentials file directly and cannot decrypt, so a
+    // sealed profile that is bound would silently drop to the default account.
+    if (isSealed(value.profile)) {
+      add(
+        'fail',
+        'binding',
+        `${value.displayPath ?? key} -> "${value.profile}" is sealed; the shim cannot read it`,
+        () => {
+          unsealIfNeeded(value.profile);
+          return `${value.profile} unsealed`;
+        },
+      );
     }
   }
 
@@ -178,7 +224,35 @@ export function doctor() {
         : c.green('all checks passed'),
   );
 
-  if (failures) process.exitCode = 1;
+  const repairable = results.filter((r) => r.repair && r.level !== 'ok');
+  let unrepaired = failures;
+
+  if (repairable.length && !fix) {
+    console.log('');
+    console.log(
+      `  ${repairable.length} of these can be repaired automatically: ${c.cyan('ccp doctor --fix')}`,
+    );
+  }
+
+  if (fix && repairable.length) {
+    console.log('');
+    console.log(c.bold('Repairing'));
+    for (const finding of repairable) {
+      try {
+        const outcome = finding.repair();
+        console.log(`${c.green(sym.ok)} ${finding.label.padEnd(24)} ${outcome}`);
+        if (finding.level === 'fail') unrepaired--;
+      } catch (err) {
+        console.log(`${c.red(sym.bad)} ${finding.label.padEnd(24)} ${err.message}`);
+      }
+    }
+    console.log('');
+    console.log(c.dim('  re-run `ccp doctor` to confirm'));
+  }
+
+  // Only structural state is repairable. Anything needing a login, a token
+  // refresh or a Claude Code change is reported and left alone on purpose.
+  if (unrepaired > 0) process.exitCode = 1;
 }
 
 /** What the shim would do for a directory, without launching anything. */

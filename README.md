@@ -197,6 +197,7 @@ Get-FileHash $HOME\.claude\.credentials.json -Algorithm SHA256
 |---|---|
 | `ccp setup` | Build the shim, point VS Code at it (`--dry-run` to preview) |
 | `ccp doctor` | Check every assumption this tool makes against your install |
+| `ccp doctor --fix` | Repair what can be repaired safely |
 | `ccp teardown` | Remove the VS Code wrapper setting |
 | `ccp login <name>` | Add an account — browser login, straight into its own store |
 | `ccp save <name>` | Copy the account already in `~/.claude` into a store |
@@ -400,6 +401,17 @@ terms treat it differently. Worth checking your plan before relying on it.
 makes against your Claude Code install and names what has drifted. Because all of
 this rests on undocumented internals, a Claude Code update can break everyone at
 once — `doctor` output is what to compare when that happens.
+
+`ccp doctor --fix` repairs the structural things: rebuilding the shim, restoring
+the VS Code wrapper setting, regenerating the bindings index, dropping bindings
+whose profile no longer exists, and unsealing a sealed profile that a project is
+bound to. Every repair is safe to run twice.
+
+It deliberately will **not** touch anything else. It never writes to `~/.claude`,
+never refreshes or replaces a token, and never overwrites a
+`claudeProcessWrapper` that belongs to some other tool. Anything needing a login
+or a token refresh is reported and left for you — `ccp login` and
+`ccp daemon run` are the commands for those.
 
 | Symptom | |
 |---|---|

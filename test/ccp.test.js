@@ -12,9 +12,14 @@ process.env.CCP_HOME = sandbox;
 const { claudeConfigFile, secureStorageDir, credentialsPath, assertValidProfileName } = await import(
   '../src/paths.js'
 );
-const { normalizeProjectPath, isUnder, setBinding, resolveBinding, writeShimIndex } = await import(
-  '../src/bindings.js'
-);
+const {
+  normalizeProjectPath,
+  isUnder,
+  setBinding,
+  removeBinding,
+  resolveBinding,
+  writeShimIndex,
+} = await import('../src/bindings.js');
 const { applyAccount, extractAccount, tokenHealth } = await import('../src/credentials.js');
 const { DEFAULT_PROFILE, isDefaultName, defaultProfileDir, assertNotDefault } = await import(
   '../src/default-profile.js'
@@ -208,6 +213,20 @@ test('CCP_SHELL overrides the shell that `ccp shell` nests', () => {
     if (before === undefined) delete process.env.CCP_SHELL;
     else process.env.CCP_SHELL = before;
   }
+});
+
+test('removing a binding drops it from the shim index too', () => {
+  // This is what `ccp doctor --fix` does for a binding whose profile is gone:
+  // the index must not keep pointing at it.
+  const project = path.join(sandbox, 'doomed-project');
+  fs.mkdirSync(path.join(sandbox, 'store', 'doomed'), { recursive: true });
+  setBinding(project, 'doomed');
+  assert.ok(fs.readFileSync(path.join(sandbox, 'bindings.tsv'), 'utf8').includes('doomed'));
+
+  assert.equal(removeBinding(project), true);
+  assert.ok(!fs.readFileSync(path.join(sandbox, 'bindings.tsv'), 'utf8').includes('doomed-project'));
+  // Removing it twice is not an error -- repairs must be safe to re-run.
+  assert.equal(removeBinding(project), false);
 });
 
 // --------------------------------------------------------------------- rules
