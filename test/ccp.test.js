@@ -9,9 +9,13 @@ import test from 'node:test';
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'ccp-test-'));
 process.env.CCP_HOME = sandbox;
 
-const { claudeConfigFile, secureStorageDir, credentialsPath, assertValidProfileName } = await import(
-  '../src/paths.js'
-);
+const {
+  claudeConfigFile,
+  secureStorageDir,
+  credentialsPath,
+  assertValidProfileName,
+  launchesDir,
+} = await import('../src/paths.js');
 const {
   normalizeProjectPath,
   isUnder,
@@ -30,6 +34,7 @@ const { normalizeUsage, headline, severityOf, resetsIn } = await import('../src/
 const { normalizeRemote, matchRule, readOriginUrl, readProjectConfig } = await import(
   '../src/rules.js'
 );
+const { liveSessions, driftedSessions } = await import('../src/sessions.js');
 
 test.after(() => fs.rmSync(sandbox, { recursive: true, force: true }));
 
@@ -479,4 +484,100 @@ test('writeJsonAtomic accepts a passing verification', () => {
 
 test('readJson returns the fallback for a missing file', () => {
   assert.equal(readJson(path.join(sandbox, 'nope.json'), 'fallback'), 'fallback');
+});
+
+// ------------------------------------------------------------------ sessions
+//
+// A binding describes the next launch, not the present. These cover the gap
+// that let a switched project keep billing its old account in silence.
+
+/** Write a launch record exactly as the shim does, CRLF and all. */
+function writeLaunchRecord(pid, { profile, storeDir = '', cwd }) {
+  const dir = launchesDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const line = [new Date().toISOString(), profile, storeDir, cwd].join('\t');
+  fs.writeFileSync(path.join(dir, `${pid}.tsv`), `${line}\r\n`);
+}
+
+function clearLaunches() {
+  fs.rmSync(launchesDir(), { recursive: true, force: true });
+}
+
+test('a live session is reported with the account it actually launched on', () => {
+  clearLaunches();
+  const project = path.join(sandbox, 'proj-live');
+  setBinding(project, 'work');
+  // process.pid is by definition alive, which is the whole liveness contract.
+  writeLaunchRecord(process.pid, { profile: 'work', cwd: normalizeProjectPath(project) });
+
+  const live = liveSessions({ prune: false });
+  assert.equal(live.length, 1);
+  assert.equal(live[0].profile, 'work');
+  assert.equal(live[0].boundProfile, 'work');
+  assert.equal(live[0].drifted, false);
+  removeBinding(project);
+});
+
+test('a session still on the old account after a switch is reported as drifted', () => {
+  clearLaunches();
+  const project = path.join(sandbox, 'proj-drift');
+  setBinding(project, 'personal');
+  // Launched before the switch, so it is running the previous account.
+  writeLaunchRecord(process.pid, { profile: 'work', cwd: normalizeProjectPath(project) });
+
+  const [session] = driftedSessions({ prune: false });
+  assert.ok(session, 'the drifted session should be reported');
+  assert.equal(session.profile, 'work');
+  assert.equal(session.boundProfile, 'personal');
+  removeBinding(project);
+});
+
+test('the record survives the CRLF the shim writes', () => {
+  clearLaunches();
+  const project = path.join(sandbox, 'proj-crlf');
+  setBinding(project, 'work');
+  const cwd = normalizeProjectPath(project);
+  writeLaunchRecord(process.pid, { profile: 'work', cwd });
+
+  // A trailing \r on the last field breaks the path comparison and makes every
+  // session look drifted -- which is worse than no warning, because it trains
+  // you to ignore the one that matters.
+  const [session] = liveSessions({ prune: false });
+  assert.equal(session.cwd, cwd);
+  assert.equal(session.drifted, false);
+  removeBinding(project);
+});
+
+test('an unbound session running on the default account is not drift', () => {
+  clearLaunches();
+  const project = path.join(sandbox, 'proj-unbound');
+  fs.mkdirSync(project, { recursive: true });
+  writeLaunchRecord(process.pid, { profile: 'default', cwd: normalizeProjectPath(project) });
+
+  assert.deepEqual(driftedSessions({ prune: false }), []);
+});
+
+test('a record whose process is gone is dropped, and pruned from disk', () => {
+  clearLaunches();
+  const project = path.join(sandbox, 'proj-dead');
+  setBinding(project, 'work');
+  // A pid that cannot exist: Windows and Linux both refuse to allocate it.
+  const deadPid = 999999999;
+  writeLaunchRecord(deadPid, { profile: 'work', cwd: normalizeProjectPath(project) });
+
+  assert.deepEqual(liveSessions(), []);
+  assert.equal(fs.existsSync(path.join(launchesDir(), `${deadPid}.tsv`)), false);
+  removeBinding(project);
+});
+
+test('a truncated record is ignored rather than thrown on', () => {
+  clearLaunches();
+  fs.mkdirSync(launchesDir(), { recursive: true });
+  fs.writeFileSync(path.join(launchesDir(), `${process.pid}.tsv`), 'garbage\r\n');
+  assert.deepEqual(liveSessions({ prune: false }), []);
+});
+
+test('liveSessions returns nothing when no launch directory exists', () => {
+  clearLaunches();
+  assert.deepEqual(liveSessions(), []);
 });

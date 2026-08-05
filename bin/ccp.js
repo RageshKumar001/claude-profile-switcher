@@ -7,6 +7,7 @@ import { list } from '../src/commands/list.js';
 import { login, save } from '../src/commands/login.js';
 import { apply, ruleAdd, ruleList, ruleRemove, scan } from '../src/commands/rule.js';
 import { seal, unseal } from '../src/commands/seal.js';
+import { sessions } from '../src/commands/sessions.js';
 import { setup, teardown } from '../src/commands/setup.js';
 import { usage } from '../src/commands/usage.js';
 import { assertNotDefault } from '../src/default-profile.js';
@@ -44,7 +45,11 @@ ${c.bold('Projects')}
   ccp unbind                revert this project to the default account
   ccp bindings              list every bound project
   ccp current               show which account this project uses
+  ccp sessions              which account each running session is really on
   ccp explain               show what the shim will do here, and why
+
+  ${c.dim('A binding applies to the next launch. Sessions already open keep the')}
+  ${c.dim('account they started with until you reload the window.')}
 
 ${c.bold('Binding by rule')}
   ccp rule add <pat> <name> bind by git remote, e.g. "github.com/acme/*"
@@ -205,6 +210,10 @@ try {
     case 'current':
     case 'who':
       current({ cwd, json });
+      break;
+
+    case 'sessions':
+      sessions({ json });
       break;
 
     case 'explain':

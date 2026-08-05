@@ -68,6 +68,8 @@ export const bindingsJson = () => path.join(ccpRoot(), 'bindings.json');
 export const bindingsIndex = () => path.join(ccpRoot(), 'bindings.tsv');
 export const stateJson = () => path.join(ccpRoot(), 'state.json');
 export const logsDir = () => path.join(ccpRoot(), 'logs');
+/** One file per live Claude process, written by the shim. See src/sessions.js. */
+export const launchesDir = () => path.join(ccpRoot(), 'launches');
 export const shimExe = () => path.join(ccpRoot(), 'bin', 'ccp-shim.exe');
 /**
  * Written by `ccp setup`. Lets the VS Code extension find this CLI instead of

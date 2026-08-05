@@ -95,12 +95,24 @@ ccp bind default          # ...or pin a project to the account you already use
 
 ccp current               # which account this project uses
 ccp bindings              # every bound project
+ccp sessions              # which account each *running* session is really on
 ccp explain               # exactly what the shim will do here, and why
 ```
 
 From VS Code: click the account in the status bar, or run **Claude Profile:
-Switch Account for This Project**. A binding takes effect the next time Claude
-starts, so the extension offers to restart it for you.
+Switch Account for This Project**.
+
+> [!IMPORTANT]
+> **A binding applies to the next launch, not to conversations already open.**
+> `CLAUDE_SECURESTORAGE_CONFIG_DIR` is read once, when the process starts, so a
+> chat you had open before the switch keeps using — and keeps billing — the
+> account it started on. Reload the VS Code window to move it over. Starting a
+> new conversation is not enough: it spawns a correctly bound process, but the
+> old one stays alive behind it.
+>
+> You do not have to remember this. The status bar turns amber and reads
+> `⚠ Claude: old-account (not new-account)` whenever it happens, and
+> `ccp sessions` names every process that is out of step.
 
 Projects you never bind keep using your existing account, unchanged.
 
@@ -215,6 +227,7 @@ Get-FileHash $HOME\.claude\.credentials.json -Algorithm SHA256
 | `ccp apply` | Bind this project from a rule or its `.ccp.json` |
 | `ccp scan [dir]` | Apply rules across every repo under a directory |
 | `ccp current` | Which account this project uses |
+| `ccp sessions` | Which account each running session is really on, and which are out of step |
 | `ccp explain` | What the shim will do here, and why |
 | `ccp sync-mcp` | Replicate MCP server logins across all stores |
 | `ccp seal [name]` | Encrypt at rest any profile not bound to a project |
@@ -407,6 +420,10 @@ the VS Code wrapper setting, regenerating the bindings index, dropping bindings
 whose profile no longer exists, and unsealing a sealed profile that a project is
 bound to. Every repair is safe to run twice.
 
+It also reports what it must **not** repair: a running session whose account no
+longer matches its binding. Ending someone's live Claude session is not a
+repair, so `doctor` names the process and leaves it to you.
+
 It deliberately will **not** touch anything else. It never writes to `~/.claude`,
 never refreshes or replaces a token, and never overwrites a
 `claudeProcessWrapper` that belongs to some other tool. Anything needing a login
@@ -416,6 +433,7 @@ or a token refresh is reported and left for you — `ccp login` and
 | Symptom | |
 |---|---|
 | `ccp` is not recognised | `npm link` didn't take. Use `node bin/ccp.js …`, or add npm's global bin to PATH |
+| I switched accounts but the old one is still being billed | The conversation you're in launched before the switch and keeps its account. Run `ccp sessions` to confirm, then reload the VS Code window |
 | The binding isn't applying | Restart VS Code — `ccp setup` writes a setting the extension reads at startup. Then `ccp explain` in that folder |
 | `/status` names the wrong account | Expected; see above. Authentication is still correct — trust the status bar |
 | `ccp setup` refused to configure VS Code | You already have a `claudeProcessWrapper` set. Remove it, or chain it from the shim |

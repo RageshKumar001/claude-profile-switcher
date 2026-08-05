@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { buildShim } from '../../scripts/build-shim.mjs';
@@ -16,6 +17,7 @@ import {
   storeDir,
 } from '../paths.js';
 import { defaultProfileDir, defaultProfileInfo, isDefaultName } from '../default-profile.js';
+import { driftedSessions } from '../sessions.js';
 import { listProfiles, profileExists } from '../store.js';
 import { c, healthLabel, sym } from '../ui.js';
 import { candidateSettingsPaths, readSetting, writeSetting } from '../vscode-settings.js';
@@ -190,6 +192,21 @@ export function doctor({ fix = false } = {}) {
         },
       );
     }
+  }
+
+  // --- Running sessions -----------------------------------------------------
+  // The failure this catches is invisible everywhere else: a session launched
+  // before a switch keeps the account it started with, so the binding says one
+  // thing and the conversation you are typing into bills another. There is no
+  // safe repair -- killing someone's live Claude session is not doctor's call.
+  for (const s of driftedSessions()) {
+    const where = s.cwd ? path.basename(s.cwd) : `pid ${s.pid}`;
+    add(
+      'warn',
+      'running session',
+      `${where} is bound to "${s.boundProfile}" but pid ${s.pid} is running on "${s.profile}" -- ` +
+        'reload that window to pick up the binding',
+    );
   }
 
   // --- Profiles -------------------------------------------------------------

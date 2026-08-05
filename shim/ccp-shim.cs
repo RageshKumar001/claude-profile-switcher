@@ -39,15 +39,17 @@ internal static class CcpShim
         string remainder = TailOfCommandLine(Environment.CommandLine, 2);
         string storeDir = null;
         string profile = null;
+        string root = null;
+        string cwd = null;
 
         try
         {
-            string root = Path.Combine(
+            root = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 ".claude-profiles");
             _logPath = Path.Combine(root, "logs", "shim.log");
 
-            string cwd = Normalize(Directory.GetCurrentDirectory());
+            cwd = Normalize(Directory.GetCurrentDirectory());
             Lookup(Path.Combine(root, "bindings.tsv"), cwd, out storeDir, out profile);
         }
         catch (Exception ex)
@@ -75,7 +77,14 @@ internal static class CcpShim
                     // this variable in the child environment, sometimes as "",
                     // which Claude Code reads as "use the default store".
                     psi.EnvironmentVariables["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = storeDir;
-                    MarkUsed(storeDir);
+                    // Never for "default": that store is ~/.claude, and this
+                    // tool promises not to write there. The marker only exists
+                    // so the keep-alive job can tell idle stores from active
+                    // ones, and ~/.claude is not a store it ever refreshes.
+                    if (!string.Equals(profile, "default", StringComparison.OrdinalIgnoreCase))
+                    {
+                        MarkUsed(storeDir);
+                    }
                     LogVerbose("bound " + profile + " -> " + storeDir);
                 }
                 else
@@ -93,8 +102,22 @@ internal static class CcpShim
         {
             using (Process child = Process.Start(psi))
             {
-                child.WaitForExit();
-                return child.ExitCode;
+                // A binding only ever applies to a process at the moment it is
+                // launched, so the binding on disk is a statement about the next
+                // launch -- not about anything already running. Recording what
+                // this process actually got is the only way `ccp sessions` can
+                // tell you that a live conversation is on a different account
+                // than the one you just switched to.
+                string record = RecordLaunch(root, child.Id, profile, storeDir, cwd);
+                try
+                {
+                    child.WaitForExit();
+                    return child.ExitCode;
+                }
+                finally
+                {
+                    Forget(record);
+                }
             }
         }
         catch (Exception ex)
@@ -102,6 +125,53 @@ internal static class CcpShim
             Console.Error.WriteLine("ccp-shim: failed to launch " + target + ": " + ex.Message);
             Log("launch failed: " + ex.Message);
             return 1;
+        }
+    }
+
+    /// <summary>
+    /// Note that a Claude process is running on a given account.
+    ///
+    /// Best effort, like every other piece of bookkeeping here: a failure to
+    /// record must never stop Claude starting. Returns the file written, or
+    /// null if nothing was.
+    /// </summary>
+    private static string RecordLaunch(
+        string root, int pid, string profile, string storeDir, string cwd)
+    {
+        if (root == null) return null;
+        try
+        {
+            string dir = Path.Combine(root, "launches");
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, pid + ".tsv");
+            // An unbound launch is recorded too. "running on default because no
+            // binding matched" is exactly the state worth being able to see.
+            File.WriteAllText(
+                file,
+                string.Join("\t", new string[] {
+                    DateTime.UtcNow.ToString("o"),
+                    profile ?? "default",
+                    storeDir ?? string.Empty,
+                    cwd ?? string.Empty,
+                }) + Environment.NewLine,
+                new UTF8Encoding(false));
+            return file;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void Forget(string record)
+    {
+        try
+        {
+            if (record != null) File.Delete(record);
+        }
+        catch
+        {
+            // A stale record is harmless: readers drop any whose pid is gone.
         }
     }
 

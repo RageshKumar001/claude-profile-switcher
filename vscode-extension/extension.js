@@ -243,30 +243,58 @@ async function switchAccount(resource) {
 
 /**
  * A binding only takes effect when Claude Code next starts, because the shim
- * reads it at launch. Starting a new conversation respawns that process.
+ * reads it at launch.
+ *
+ * Reloading the window is the primary action because it is the only one that is
+ * *certain*. `claude-vscode.newConversation` does spawn a correctly bound
+ * process, but it leaves the conversation you were in open and selected -- and
+ * that one is still running on the old account. Offering it as "Restart Claude"
+ * was wrong: it looked like the switch had landed while the session kept
+ * spending the previous account's quota, with nothing on screen to say so.
  */
 async function offerRestart(profileName) {
   const label = profileName ?? 'the default account';
   const choice = await vscode.window.showInformationMessage(
-    `This project now uses ${label}. Claude picks this up on its next launch.`,
-    'Restart Claude',
+    `This project now uses ${label}.`,
+    {
+      modal: false,
+      detail:
+        'Conversations already open keep the account they started on. Reload to move them.',
+    },
+    'Reload Window',
+    'New Conversation',
     'Later',
   );
-  if (choice !== 'Restart Claude') return;
 
-  try {
-    await vscode.commands.executeCommand('claude-vscode.newConversation');
-  } catch (err) {
-    output.appendLine(`newConversation failed: ${err.message}`);
-    const reload = await vscode.window.showWarningMessage(
-      'Could not start a new Claude conversation. Reload the window instead?',
-      'Reload Window',
-      'Cancel',
-    );
-    if (reload === 'Reload Window') {
-      await vscode.commands.executeCommand('workbench.action.reloadWindow');
+  if (choice === 'Reload Window') {
+    await vscode.commands.executeCommand('workbench.action.reloadWindow');
+    return;
+  }
+
+  if (choice === 'New Conversation') {
+    try {
+      await vscode.commands.executeCommand('claude-vscode.newConversation');
+      // The old conversation is still there, still on the old account. Say so
+      // rather than let a stale tab quietly bill the wrong place.
+      vscode.window.showWarningMessage(
+        `Started a new conversation on ${label}. Any conversation you had open before ` +
+          'is still running on the previous account -- reload the window to end it.',
+      );
+    } catch (err) {
+      output.appendLine(`newConversation failed: ${err.message}`);
+      const reload = await vscode.window.showWarningMessage(
+        'Could not start a new Claude conversation. Reload the window instead?',
+        'Reload Window',
+        'Cancel',
+      );
+      if (reload === 'Reload Window') {
+        await vscode.commands.executeCommand('workbench.action.reloadWindow');
+      }
     }
   }
+
+  // Whatever was chosen, re-check what is actually running.
+  refresh();
 }
 
 async function addAccount() {
@@ -322,6 +350,8 @@ function describeHealth(profile) {
 // can show it without ever waiting on the network.
 const usageByProfile = new Map();
 let lastInfo = null;
+/** A live session in this window running on an account the binding no longer names. */
+let drift = null;
 
 /** The worst of an account's windows -- whichever one will stop you first. */
 function worstWindow(usage) {
@@ -462,13 +492,57 @@ function refresh() {
   // Deliberately not awaited: the account name is already on screen, and the
   // percentage arrives when it arrives.
   void updateUsage(lastInfo.usesDefault || !lastInfo.bound ? 'default' : lastInfo.profile);
+  void updateDrift(folder);
   if (!lastInfo.bound) void applyDeclared(folder);
+}
+
+/**
+ * Is a Claude session in this window still running on the previous account?
+ *
+ * `CLAUDE_SECURESTORAGE_CONFIG_DIR` is read once, when the process starts, so
+ * switching accounts cannot move a conversation that is already open -- it
+ * keeps billing the account it launched with. Claude Code's own UI gives no
+ * sign of this, so showing the binding alone is actively misleading: it reads
+ * as the current state when it is only a statement about the next launch.
+ */
+async function updateDrift(folder) {
+  let live = [];
+  try {
+    live = await runCliAsync(['sessions', '--json'], { json: true });
+  } catch {
+    // Older shim, or nothing has launched through it yet. Absence of evidence
+    // is not drift, so say nothing rather than guess.
+  }
+
+  const here = String(folder).replace(/\//g, '\\').toLowerCase();
+  drift =
+    live.find((s) => {
+      if (!s.drifted || !s.cwd) return false;
+      const cwd = String(s.cwd).replace(/\//g, '\\').toLowerCase();
+      return cwd === here || cwd.startsWith(here.endsWith('\\') ? here : here + '\\');
+    }) ?? null;
+
+  paint();
 }
 
 function paint() {
   if (!statusBar || !lastInfo) return;
   const info = lastInfo;
   const name = info.usesDefault || !info.bound ? 'default' : info.profile;
+
+  // Drift outranks everything else on the status bar. Whatever the binding
+  // says, this is the account the running session is spending.
+  if (drift) {
+    statusBar.text = `$(warning) Claude: ${drift.profile} (not ${drift.boundProfile})`;
+    statusBar.tooltip =
+      `This project is bound to ${drift.boundProfile}, but the Claude session ` +
+      `running here (pid ${drift.pid}) started on ${drift.profile} and is still ` +
+      `using it.\n\nA session keeps the account it launched with. Reload the ` +
+      `window to move it onto ${drift.boundProfile}.\n\nClick to change the binding.`;
+    statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    statusBar.show();
+    return;
+  }
 
   const who = (info.email ? `\n${info.email}` : '') + (info.plan ? `  (${info.plan})` : '');
   const quota = usageSuffix(name);
