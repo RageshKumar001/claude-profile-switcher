@@ -201,6 +201,7 @@ Get-FileHash $HOME\.claude\.credentials.json -Algorithm SHA256
 | `ccp login <name>` | Add an account — browser login, straight into its own store |
 | `ccp save <name>` | Copy the account already in `~/.claude` into a store |
 | `ccp ls` | Accounts, token health, project counts (`--json` for scripts) |
+| `ccp usage [name]` | How much quota each account has left |
 | `ccp rm <name>` | Delete a profile |
 | `ccp exec [name] -- <cmd>` | Run any command as an account, no VS Code involved |
 | `ccp shell [name]` | Nested shell using that account; `exit` to leave |
@@ -238,6 +239,33 @@ and `default` is a reserved name so no store can shadow it.
 `ccp save <name>` does take a copy, if you want a snapshot pinned to a name that
 survives signing `~/.claude` into a different account. It prints the caveat
 above. `ccp login <name>` avoids it entirely by minting a separate token pair.
+
+## Quota
+
+Holding several accounts turns "which one has room left?" into a daily
+question. `ccp usage` answers it for all of them at once:
+
+```
+  ACCOUNT     SESSION  WEEK     OPUS  RESETS
+  default      62% 5h   22% 7d  -     resets in 2h 48m
+  work        100% 5h   61% 7d  -     resets in 1h 8m
+
+  work out of quota -- ccp bind default has room
+```
+
+The VS Code status bar shows the same figure for the account this project uses
+(`work  62%`), and turns amber when it hits 100%. The account picker shows every
+account's usage, so you can choose one with headroom rather than discovering the
+limit mid-task.
+
+This costs nothing. Claude Code reads quota from a dedicated endpoint rather
+than from inference response headers, so `ccp` asks the same way — no tokens
+spent to find out how many tokens you have left. Figures are cached, and
+`--max-age <seconds>` will serve from that cache instead of asking again.
+
+One limit: if the default account's access token has lapsed, its quota reads as
+unavailable rather than being refreshed. Refreshing rotates the token, and `ccp`
+does not do that to `~/.claude`. Using Claude normally clears it.
 
 ## What is shared, what is separate
 

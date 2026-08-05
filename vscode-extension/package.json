@@ -10,7 +10,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/RageshKumar001/claude-profile-switcher.git"
+    "url": "https://github.com/RageshKumar001/claude-profile-switcher"
   },
   "bugs": {
     "url": "https://github.com/RageshKumar001/claude-profile-switcher/issues"
@@ -44,6 +44,10 @@
       {
         "command": "ccp.refresh",
         "title": "Claude Profile: Refresh Status"
+      },
+      {
+        "command": "ccp.showUsage",
+        "title": "Claude Profile: Show Usage"
       }
     ],
     "menus": {

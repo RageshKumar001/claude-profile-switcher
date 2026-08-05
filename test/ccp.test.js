@@ -21,6 +21,7 @@ const { DEFAULT_PROFILE, isDefaultName, defaultProfileDir, assertNotDefault } = 
 );
 const { writeJsonAtomic, readJson } = await import('../src/json-file.js');
 const { resolveProfileTarget, pickShell } = await import('../src/commands/exec.js');
+const { normalizeUsage, headline, severityOf, resetsIn } = await import('../src/usage.js');
 
 test.after(() => fs.rmSync(sandbox, { recursive: true, force: true }));
 
@@ -204,6 +205,66 @@ test('CCP_SHELL overrides the shell that `ccp shell` nests', () => {
     if (before === undefined) delete process.env.CCP_SHELL;
     else process.env.CCP_SHELL = before;
   }
+});
+
+// --------------------------------------------------------------------- usage
+
+// Shape captured from a live GET /api/oauth/usage response.
+const USAGE_BODY = {
+  five_hour: { utilization: 100, resets_at: '2026-08-05T21:00:00.000000+00:00' },
+  seven_day: { utilization: 61, resets_at: '2026-08-11T04:00:00.000000+00:00' },
+  seven_day_opus: null,
+  // A dozen null keys for unreleased buckets ship in every response; they must
+  // not be mistaken for data.
+  tangelo: null,
+  nimbus_quill: null,
+  extra_usage: { is_enabled: false, utilization: null },
+  limits: [
+    { kind: 'session', percent: 100, severity: 'critical', is_active: true },
+    { kind: 'weekly_all', percent: 61, severity: 'normal', is_active: false },
+  ],
+};
+
+test('normalizeUsage keeps the windows that exist and drops the empty ones', () => {
+  const usage = normalizeUsage(USAGE_BODY);
+  assert.equal(usage.fiveHour.percent, 100);
+  assert.equal(usage.sevenDay.percent, 61);
+  assert.equal(usage.opus, null);
+  assert.equal(usage.extra, null);
+  assert.equal(usage.limits.length, 2);
+});
+
+test('normalizeUsage survives a response with nothing in it', () => {
+  const usage = normalizeUsage({});
+  assert.equal(usage.fiveHour, null);
+  assert.deepEqual(usage.limits, []);
+});
+
+test('headline reports the window that will stop you first', () => {
+  // The weekly window is the binding constraint here, not the session one.
+  const usage = normalizeUsage({
+    five_hour: { utilization: 12, resets_at: null },
+    seven_day: { utilization: 96, resets_at: null },
+  });
+  assert.equal(headline(usage).percent, 96);
+  assert.equal(headline(usage).window, '7d');
+  assert.equal(headline(normalizeUsage({})), null);
+});
+
+test('severityOf grades a percentage', () => {
+  assert.equal(severityOf(10), 'normal');
+  assert.equal(severityOf(80), 'warning');
+  assert.equal(severityOf(100), 'critical');
+  assert.equal(severityOf(null), 'unknown');
+});
+
+test('resetsIn renders a countdown, not a timestamp', () => {
+  const now = Date.parse('2026-08-05T12:00:00Z');
+  assert.equal(resetsIn('2026-08-05T12:30:00Z', now), 'resets in 30m');
+  assert.equal(resetsIn('2026-08-05T15:20:00Z', now), 'resets in 3h 20m');
+  assert.equal(resetsIn('2026-08-07T18:00:00Z', now), 'resets in 2d 6h');
+  assert.equal(resetsIn('2026-08-05T11:00:00Z', now), 'resetting now');
+  assert.equal(resetsIn(null, now), null);
 });
 
 // --------------------------------------------------------------- credentials

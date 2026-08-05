@@ -22,6 +22,7 @@ function activate(context) {
     vscode.commands.registerCommand('ccp.addAccount', addAccount),
     vscode.commands.registerCommand('ccp.unbind', unbind),
     vscode.commands.registerCommand('ccp.refresh', refresh),
+    vscode.commands.registerCommand('ccp.showUsage', showUsage),
     vscode.window.onDidChangeActiveTextEditor(refresh),
     vscode.workspace.onDidChangeWorkspaceFolders(refresh),
   );
@@ -60,6 +61,45 @@ function resolveCli() {
     /* fall through */
   }
   return null;
+}
+
+/**
+ * Same bridge, without blocking the extension host.
+ *
+ * Usage needs a network round trip, and refresh() runs on every editor change,
+ * so it must never be fetched with spawnSync.
+ */
+function runCliAsync(args, { json = false, timeout = 20_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const cli = resolveCli();
+    if (!cli) return reject(new Error('ccp is not set up yet'));
+
+    const child = cp.spawn(cli.node, [cli.cliEntry, ...args], {
+      windowsHide: true,
+      shell: false,
+      env: { ...process.env, NO_COLOR: '1' },
+    });
+
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => child.kill(), timeout);
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (err += d));
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) return reject(new Error((err || out || 'ccp failed').trim()));
+      if (!json) return resolve(out);
+      try {
+        resolve(JSON.parse(out));
+      } catch {
+        reject(new Error(`could not parse output of \`ccp ${args.join(' ')}\``));
+      }
+    });
+  });
 }
 
 function runCli(args, { json = false } = {}) {
@@ -139,12 +179,30 @@ async function switchAccount(resource) {
     return;
   }
 
-  const items = profiles.map((p) => ({
-    label: `${p.name === currentBinding.profile ? '$(check) ' : p.readonly ? '$(home) ' : '$(account) '}${p.name}`,
-    description: [p.email, p.plan].filter(Boolean).join('  ·  '),
-    detail: p.readonly ? 'The account already signed into ~/.claude' : describeHealth(p),
-    profile: p.name,
-  }));
+  // Which account has room is usually the reason you are opening this list, so
+  // it is worth a short wait. Cached figures are reused, and a failure here
+  // just means the list renders without them.
+  let usageRows = [];
+  try {
+    usageRows = await runCliAsync(['usage', '--json', '--max-age', '120'], { json: true });
+  } catch {
+    /* quota is optional context */
+  }
+  const quotaFor = (name) => worstWindow(usageRows.find((r) => r.name === name)?.usage);
+
+  const items = profiles.map((p) => {
+    const quota = quotaFor(p.name);
+    return {
+      label: `${p.name === currentBinding.profile ? '$(check) ' : p.readonly ? '$(home) ' : '$(account) '}${p.name}`,
+      description: [p.email, p.plan, quota && `${quota.percent}% used`]
+        .filter(Boolean)
+        .join('  ·  '),
+      detail:
+        (p.readonly ? 'The account already signed into ~/.claude' : describeHealth(p)) +
+        (quota?.percent >= 100 ? '  —  out of quota right now' : ''),
+      profile: p.name,
+    };
+  });
 
   // Only offered when there is something to clear. "default" is already in the
   // list above with its real identity, so an extra "use the default" entry here
@@ -260,6 +318,58 @@ function describeHealth(profile) {
   return profile.projects ? `${profile.projects} project(s)` : 'not bound to any project';
 }
 
+// Quota, keyed by account name. Populated in the background so the status bar
+// can show it without ever waiting on the network.
+const usageByProfile = new Map();
+let lastInfo = null;
+
+/** The worst of an account's windows -- whichever one will stop you first. */
+function worstWindow(usage) {
+  const windows = [
+    usage?.fiveHour && { ...usage.fiveHour, window: '5h' },
+    usage?.sevenDay && { ...usage.sevenDay, window: '7d' },
+    usage?.opus && { ...usage.opus, window: 'Opus' },
+  ].filter(Boolean);
+  if (!windows.length) return null;
+  return windows.reduce((worst, w) => (w.percent > worst.percent ? w : worst));
+}
+
+function usageSuffix(profileName) {
+  const worst = worstWindow(usageByProfile.get(profileName));
+  return worst ? `  ${worst.percent}%` : '';
+}
+
+function usageTooltip(profileName) {
+  const usage = usageByProfile.get(profileName);
+  if (!usage) return '';
+  const parts = [];
+  if (usage.fiveHour) parts.push(`Session (5h): ${usage.fiveHour.percent}%`);
+  if (usage.sevenDay) parts.push(`Week (7d): ${usage.sevenDay.percent}%`);
+  if (usage.opus) parts.push(`Opus (7d): ${usage.opus.percent}%`);
+  return parts.length ? `\n\n${parts.join('\n')}` : '';
+}
+
+/**
+ * Fetch quota for the account in view, then repaint.
+ *
+ * `--max-age` lets the CLI serve a recent answer from cache, so a burst of
+ * editor changes does not become a burst of requests.
+ */
+async function updateUsage(profileName) {
+  if (!profileName) return;
+  try {
+    const rows = await runCliAsync(['usage', profileName, '--json', '--max-age', '240'], {
+      json: true,
+    });
+    if (rows?.[0]?.usage) {
+      usageByProfile.set(profileName, rows[0].usage);
+      paint();
+    }
+  } catch {
+    /* quota is a nicety -- never let it break the status bar */
+  }
+}
+
 function refresh() {
   if (!statusBar) return;
 
@@ -274,10 +384,10 @@ function refresh() {
     return;
   }
 
-  let info;
   try {
-    info = runCli(['current', '--json', '--cwd', folder], { json: true });
+    lastInfo = runCli(['current', '--json', '--cwd', folder], { json: true });
   } catch (err) {
+    lastInfo = null;
     statusBar.text = '$(account) Claude: not set up';
     statusBar.tooltip = err.message;
     statusBar.backgroundColor = undefined;
@@ -285,30 +395,62 @@ function refresh() {
     return;
   }
 
+  paint();
+  // Deliberately not awaited: the account name is already on screen, and the
+  // percentage arrives when it arrives.
+  void updateUsage(lastInfo.usesDefault || !lastInfo.bound ? 'default' : lastInfo.profile);
+}
+
+function paint() {
+  if (!statusBar || !lastInfo) return;
+  const info = lastInfo;
+  const name = info.usesDefault || !info.bound ? 'default' : info.profile;
+
   const who = (info.email ? `\n${info.email}` : '') + (info.plan ? `  (${info.plan})` : '');
+  const quota = usageSuffix(name);
 
   if (!info.bound) {
-    statusBar.text = '$(home) Claude: default';
+    statusBar.text = `$(home) Claude: default${quota}`;
     statusBar.tooltip =
       `This project uses the account ~/.claude is signed into.${who}` +
+      usageTooltip(name) +
       '\n\nClick to bind it to a specific account.';
   } else if (info.usesDefault) {
-    statusBar.text = '$(home) Claude: default';
+    statusBar.text = `$(home) Claude: default${quota}`;
     statusBar.tooltip =
-      `Bound to the account ~/.claude is signed into.${who}` +
-      '\n\nClick to change.';
+      `Bound to the account ~/.claude is signed into.${who}` + usageTooltip(name) + '\n\nClick to change.';
   } else {
-    statusBar.text = `$(account) ${info.profile}`;
+    statusBar.text = `$(account) ${info.profile}${quota}`;
     statusBar.tooltip =
       `Claude account for this project: ${info.profile}${who}` +
+      usageTooltip(name) +
       // Worth stating plainly: only credentials are per-project. Claude Code's
       // own /status reads identity from the shared config and will disagree.
       `\n\nNote: Claude's /status shows the default account, not this one.` +
       `\nAuthentication is correct; only that display lags.` +
       '\n\nClick to change.';
   }
-  statusBar.backgroundColor = undefined;
+
+  // Only shout when the account is actually spent -- a warning colour that is
+  // on half the time is one nobody reads.
+  const worst = worstWindow(usageByProfile.get(name));
+  statusBar.backgroundColor =
+    worst && worst.percent >= 100
+      ? new vscode.ThemeColor('statusBarItem.warningBackground')
+      : undefined;
   statusBar.show();
+}
+
+/** `Claude Profile: Show Usage` -- every account, in the output channel. */
+async function showUsage() {
+  output.show(true);
+  output.appendLine('');
+  try {
+    output.appendLine(await runCliAsync(['usage']));
+  } catch (err) {
+    output.appendLine(`usage lookup failed: ${err.message}`);
+    vscode.window.showErrorMessage(`Claude Profile: ${err.message}`);
+  }
 }
 
 module.exports = { activate, deactivate };

@@ -7,6 +7,7 @@ import { list } from '../src/commands/list.js';
 import { login, save } from '../src/commands/login.js';
 import { seal, unseal } from '../src/commands/seal.js';
 import { setup, teardown } from '../src/commands/setup.js';
+import { usage } from '../src/commands/usage.js';
 import { assertNotDefault } from '../src/default-profile.js';
 import { syncMcpOAuth } from '../src/mcp-sync.js';
 import { profileExists, removeProfile } from '../src/store.js';
@@ -25,6 +26,7 @@ ${c.bold('Accounts')}
   ccp login <name>          add an account (browser login into its own store)
   ccp save <name>           copy the account already in ~/.claude into a store
   ccp ls                    list accounts, token health and project counts
+  ccp usage [name]          how much quota each account has left
   ccp rm <name>             delete a profile
 
   ${c.dim('The account already signed into ~/.claude is listed as')} ${c.bold('default')}${c.dim('.')}
@@ -108,6 +110,12 @@ try {
     case 'ls':
     case 'list':
       list({ json });
+      break;
+
+    case 'usage':
+      // maxAge lets the VS Code extension redraw without a request every time.
+      // A human typing this expects live figures, so it defaults to 0.
+      await usage(positional[0], { json, maxAge: Number(option('max-age') ?? 0) });
       break;
 
     case 'rm':

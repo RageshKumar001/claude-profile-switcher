@@ -16,17 +16,21 @@ at the same time, in parallel, with no signing in and out.
 
 ## What you get
 
-**A status bar item** showing which account this project uses. Click it to
-change.
+**A status bar item** showing which account this project uses, and how much
+quota it has left. Click it to change.
 
 ```
-                                    ⟨account⟩ work    ← click to switch
+                              ⟨account⟩ work  62%    ← click to switch
 ```
 
-**A quick pick** listing your accounts with their email, plan and token health,
-so you can see what you are choosing between. The account you are *already*
-signed into is in that list as **`default`** — nothing to set up, and it is
-read-only, so picking it never rewrites your existing login.
+It turns amber when that account hits its limit, so you find out before your
+next prompt does.
+
+**A quick pick** listing your accounts with their email, plan, token health and
+current usage, so you can pick one with headroom rather than discovering the
+limit mid-task. The account you are *already* signed into is in that list as
+**`default`** — nothing to set up, and it is read-only, so picking it never
+rewrites your existing login.
 
 **Commands**, from the palette or by right-clicking a folder in the explorer:
 
@@ -35,6 +39,7 @@ read-only, so picking it never rewrites your existing login.
 | `Claude Profile: Switch Account for This Project` | Pick the account for this folder |
 | `Claude Profile: Add Account` | Sign in to a new account |
 | `Claude Profile: Use Default Account for This Project` | Remove the binding |
+| `Claude Profile: Show Usage` | Quota for every account, in the output panel |
 | `Claude Profile: Refresh Status` | Re-read the current binding |
 
 Multi-root workspaces are handled per folder — the status bar follows whichever
