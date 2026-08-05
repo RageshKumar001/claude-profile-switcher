@@ -2,6 +2,7 @@
 import { bind, current, listBindings, unbind } from '../src/commands/bind.js';
 import { installTask, runKeepAlive, taskStatus, uninstallTask } from '../src/commands/daemon.js';
 import { doctor, explain } from '../src/commands/doctor.js';
+import { exec, printEnv, shell } from '../src/commands/exec.js';
 import { list } from '../src/commands/list.js';
 import { login, save } from '../src/commands/login.js';
 import { seal, unseal } from '../src/commands/seal.js';
@@ -28,6 +29,11 @@ ${c.bold('Accounts')}
 
   ${c.dim('The account already signed into ~/.claude is listed as')} ${c.bold('default')}${c.dim('.')}
   ${c.dim('It is read-only -- bindable, never written to, sealed or deleted.')}
+
+${c.bold('Anywhere else')}
+  ccp exec [name] -- <cmd>  run a command as an account ${c.dim("(defaults to this project's)")}
+  ccp shell [name]          nested shell using that account
+  ccp env [name]            print the environment line, for scripts
 
 ${c.bold('Projects')}
   ccp bind <name>           bind the current project to an account ${c.dim('(incl. default)')}
@@ -114,6 +120,31 @@ try {
       console.log(`removed ${name}`);
       break;
     }
+
+    case 'exec': {
+      // Parsed by hand: everything after `--` belongs to the child, so the
+      // generic flag parsing above must not touch it. A `--cwd` meant for the
+      // child would otherwise be read as ours.
+      const sep = rest.indexOf('--');
+      if (sep === -1) {
+        throw new Error(
+          'ccp exec needs `--` before the command:  ccp exec [profile] -- <command> [args...]',
+        );
+      }
+      const head = rest.slice(0, sep);
+      const headCwd = head.find((a) => a.startsWith('--cwd='))?.slice(6) ?? cwd;
+      const name = head.find((a) => !a.startsWith('--'));
+      exec(name, rest.slice(sep + 1), { cwd: headCwd });
+      break;
+    }
+
+    case 'shell':
+      shell(positional[0], { cwd });
+      break;
+
+    case 'env':
+      printEnv(positional[0], { cwd });
+      break;
 
     case 'bind':
       requireName(positional[0], 'bind');

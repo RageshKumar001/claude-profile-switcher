@@ -20,6 +20,7 @@ const { DEFAULT_PROFILE, isDefaultName, defaultProfileDir, assertNotDefault } = 
   '../src/default-profile.js'
 );
 const { writeJsonAtomic, readJson } = await import('../src/json-file.js');
+const { resolveProfileTarget, pickShell } = await import('../src/commands/exec.js');
 
 test.after(() => fs.rmSync(sandbox, { recursive: true, force: true }));
 
@@ -154,6 +155,55 @@ test('mutating operations refuse to touch the default profile', () => {
   }
   // Real profiles pass straight through.
   assert.doesNotThrow(() => assertNotDefault('work', 'deleted'));
+});
+
+// ---------------------------------------------------------------- exec/shell
+
+test('exec resolves an explicit profile to its own store', () => {
+  fs.mkdirSync(path.join(sandbox, 'store', 'work'), { recursive: true });
+  const target = resolveProfileTarget({ name: 'work', cwd: sandbox });
+  assert.equal(target.name, 'work');
+  assert.equal(target.source, 'argument');
+  assert.equal(target.isDefault, false);
+  assert.ok(target.dir.endsWith(path.join('store', 'work')));
+});
+
+test('exec resolves "default" to ~/.claude rather than a store', () => {
+  const target = resolveProfileTarget({ name: 'default', cwd: sandbox });
+  assert.equal(target.isDefault, true);
+  assert.equal(target.dir, defaultProfileDir());
+});
+
+test('exec falls back to the default account in an unbound directory', () => {
+  const loose = path.join(sandbox, 'nowhere-near-a-binding');
+  fs.mkdirSync(loose, { recursive: true });
+  const target = resolveProfileTarget({ cwd: loose });
+  assert.equal(target.source, 'unbound');
+  assert.equal(target.isDefault, true);
+});
+
+test('exec uses the binding when no profile is named', () => {
+  fs.mkdirSync(path.join(sandbox, 'store', 'bound-acct'), { recursive: true });
+  const project = path.join(sandbox, 'a-bound-project');
+  setBinding(project, 'bound-acct');
+  const target = resolveProfileTarget({ cwd: path.join(project, 'nested', 'deep') });
+  assert.equal(target.name, 'bound-acct');
+  assert.equal(target.source, 'binding');
+});
+
+test('exec refuses a profile that does not exist', () => {
+  assert.throws(() => resolveProfileTarget({ name: 'not-a-profile', cwd: sandbox }), /no such profile/);
+});
+
+test('CCP_SHELL overrides the shell that `ccp shell` nests', () => {
+  const before = process.env.CCP_SHELL;
+  process.env.CCP_SHELL = '/usr/bin/fish';
+  try {
+    assert.equal(pickShell().command, '/usr/bin/fish');
+  } finally {
+    if (before === undefined) delete process.env.CCP_SHELL;
+    else process.env.CCP_SHELL = before;
+  }
 });
 
 // --------------------------------------------------------------- credentials

@@ -104,6 +104,30 @@ starts, so the extension offers to restart it for you.
 
 Projects you never bind keep using your existing account, unchanged.
 
+### Outside VS Code
+
+The shim only covers processes VS Code launches. For a plain terminal, a
+script, CI, or another editor, use the account directly:
+
+```powershell
+ccp exec work -- claude          # run anything as that account
+ccp exec -- claude               # ...or as whichever account this project uses
+ccp shell work                   # nested shell; the prompt shows [ccp:work]
+```
+
+`ccp shell` starts a child shell with the account set and tells you so in the
+prompt — `exit` returns you to normal. It refuses to nest twice. Set `CCP_SHELL`
+if you want something other than PowerShell.
+
+For scripts, `ccp env [name]` prints the assignment rather than starting
+anything:
+
+```powershell
+ccp env work | Invoke-Expression
+```
+
+Both commands set `CCP_PROFILE` in the child, so your own prompt can show it too.
+
 ## How it works
 
 Four facts, all read out of the shipped `claude.exe` rather than assumed. Every
@@ -178,6 +202,9 @@ Get-FileHash $HOME\.claude\.credentials.json -Algorithm SHA256
 | `ccp save <name>` | Copy the account already in `~/.claude` into a store |
 | `ccp ls` | Accounts, token health, project counts (`--json` for scripts) |
 | `ccp rm <name>` | Delete a profile |
+| `ccp exec [name] -- <cmd>` | Run any command as an account, no VS Code involved |
+| `ccp shell [name]` | Nested shell using that account; `exit` to leave |
+| `ccp env [name]` | Print the environment line, for scripts and CI |
 | `ccp bind <name>` | Bind the current project to an account |
 | `ccp unbind` | Revert this project to the default account |
 | `ccp bindings` | List every bound project |
