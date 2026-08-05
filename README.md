@@ -209,6 +209,10 @@ Get-FileHash $HOME\.claude\.credentials.json -Algorithm SHA256
 | `ccp bind <name>` | Bind the current project to an account |
 | `ccp unbind` | Revert this project to the default account |
 | `ccp bindings` | List every bound project |
+| `ccp rule add <pattern> <name>` | Bind by git remote, e.g. `"github.com/acme/*"` |
+| `ccp rule ls` / `rule rm` | List or remove rules |
+| `ccp apply` | Bind this project from a rule or its `.ccp.json` |
+| `ccp scan [dir]` | Apply rules across every repo under a directory |
 | `ccp current` | Which account this project uses |
 | `ccp explain` | What the shim will do here, and why |
 | `ccp sync-mcp` | Replicate MCP server logins across all stores |
@@ -239,6 +243,46 @@ and `default` is a reserved name so no store can shadow it.
 `ccp save <name>` does take a copy, if you want a snapshot pinned to a name that
 survives signing `~/.claude` into a different account. It prints the caveat
 above. `ccp login <name>` avoids it entirely by minting a separate token pair.
+
+## Binding without binding
+
+Binding each project by hand gets old once there are forty of them. Two ways to
+declare it instead.
+
+**By git remote.** Written once, locally, and applied to every repo you clone
+afterwards:
+
+```powershell
+ccp rule add "github.com/acmecorp/*" work
+ccp rule add "github.com/*/client-*"  client-a
+ccp scan D:\Projects            # apply to every repo already on disk
+```
+
+The most specific pattern wins — `github.com/acme/infra` beats
+`github.com/acme/*` beats `github.com/**`. `*` stops at a path separator, `**`
+does not. Remotes are matched in `host/owner/repo` form, so one rule covers SSH
+and HTTPS clones alike, and `.git/config` is read directly rather than shelling
+out to git.
+
+**By a file in the repo**, for teams. Commit a `.ccp.json`:
+
+```json
+{ "profile": "client-a" }
+```
+
+Everyone who opens that repo uses their own profile of that name. The file holds
+**a name and nothing else** — no tokens, no email — so it is safe to commit.
+
+Because it arrives inside a repo you cloned, it is never obeyed silently: `ccp`
+asks the first time and remembers your answer. Rules, being yours already, apply
+without asking. VS Code asks in its own UI when you open the folder.
+
+One thing to weigh: a profile name in a public repo is public. Name profiles
+neutrally, or skip the file and use a local rule.
+
+Both are resolved by `ccp` and written into the same bindings the shim reads —
+the shim itself is never taught about rules or JSON, so it stays a lookup that
+cannot fail.
 
 ## Quota
 

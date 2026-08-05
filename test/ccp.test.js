@@ -22,6 +22,9 @@ const { DEFAULT_PROFILE, isDefaultName, defaultProfileDir, assertNotDefault } = 
 const { writeJsonAtomic, readJson } = await import('../src/json-file.js');
 const { resolveProfileTarget, pickShell } = await import('../src/commands/exec.js');
 const { normalizeUsage, headline, severityOf, resetsIn } = await import('../src/usage.js');
+const { normalizeRemote, matchRule, readOriginUrl, readProjectConfig } = await import(
+  '../src/rules.js'
+);
 
 test.after(() => fs.rmSync(sandbox, { recursive: true, force: true }));
 
@@ -205,6 +208,95 @@ test('CCP_SHELL overrides the shell that `ccp shell` nests', () => {
     if (before === undefined) delete process.env.CCP_SHELL;
     else process.env.CCP_SHELL = before;
   }
+});
+
+// --------------------------------------------------------------------- rules
+
+test('normalizeRemote reduces every clone form to host/owner/repo', () => {
+  const expected = 'github.com/acme/infra';
+  for (const url of [
+    'git@github.com:acme/infra.git',
+    'https://github.com/acme/infra.git',
+    'https://github.com/acme/infra',
+    'ssh://git@github.com/acme/infra.git',
+    'https://someone@github.com/Acme/Infra.git',
+    'git://github.com/acme/infra.git/',
+  ]) {
+    assert.equal(normalizeRemote(url), expected, url);
+  }
+  assert.equal(normalizeRemote(null), null);
+  assert.equal(normalizeRemote(''), null);
+});
+
+test('a rule glob stops at path separators unless doubled', () => {
+  const rules = {
+    rules: [
+      { pattern: 'github.com/acme/*', profile: 'work' },
+      { pattern: 'gitlab.com/**', profile: 'personal' },
+    ],
+  };
+  assert.equal(matchRule('git@github.com:acme/infra.git', rules).profile, 'work');
+  // Single * must not span a separator, so a nested group does not match.
+  assert.equal(matchRule('git@github.com:acme/team/infra.git', rules), null);
+  assert.equal(matchRule('https://gitlab.com/a/b/c.git', rules).profile, 'personal');
+  assert.equal(matchRule('https://bitbucket.org/acme/x.git', rules), null);
+});
+
+test('the most specific rule wins, not the first one added', () => {
+  const rules = {
+    rules: [
+      { pattern: 'github.com/**', profile: 'catch-all' },
+      { pattern: 'github.com/acme/*', profile: 'work' },
+      { pattern: 'github.com/acme/secret', profile: 'client' },
+    ],
+  };
+  assert.equal(matchRule('github.com/acme/secret', rules).profile, 'client');
+  assert.equal(matchRule('github.com/acme/other', rules).profile, 'work');
+  assert.equal(matchRule('github.com/someone/else', rules).profile, 'catch-all');
+});
+
+test('a malformed rule pattern is skipped, not thrown', () => {
+  const rules = {
+    rules: [
+      { pattern: '[', profile: 'broken' },
+      { pattern: 'github.com/acme/*', profile: 'work' },
+    ],
+  };
+  assert.equal(matchRule('github.com/acme/infra', rules).profile, 'work');
+});
+
+test('readOriginUrl parses .git/config without invoking git', () => {
+  const repo = path.join(sandbox, 'a-repo');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.writeFileSync(
+    path.join(repo, '.git', 'config'),
+    [
+      '[core]',
+      '\trepositoryformatversion = 0',
+      '[remote "upstream"]',
+      '\turl = https://github.com/upstream/wrong.git',
+      '[remote "origin"]',
+      '\turl = git@github.com:acme/right.git',
+      '\tfetch = +refs/heads/*:refs/remotes/origin/*',
+    ].join('\n'),
+  );
+  assert.equal(readOriginUrl(repo), 'git@github.com:acme/right.git');
+  // Found from a subdirectory too, which is how VS Code will call it.
+  fs.mkdirSync(path.join(repo, 'src', 'deep'), { recursive: true });
+  assert.equal(readOriginUrl(path.join(repo, 'src', 'deep')), 'git@github.com:acme/right.git');
+  assert.equal(readOriginUrl(sandbox), null);
+});
+
+test('readProjectConfig finds .ccp.json from a subdirectory', () => {
+  const repo = path.join(sandbox, 'declared');
+  fs.mkdirSync(path.join(repo, 'nested'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.ccp.json'), JSON.stringify({ profile: 'client-a' }));
+  const found = readProjectConfig(path.join(repo, 'nested'));
+  assert.equal(found.profile, 'client-a');
+  assert.equal(found.dir, repo);
+  // A file with no profile in it is not a declaration.
+  fs.writeFileSync(path.join(repo, '.ccp.json'), JSON.stringify({ note: 'hi' }));
+  assert.equal(readProjectConfig(repo), null);
 });
 
 // --------------------------------------------------------------------- usage

@@ -370,6 +370,69 @@ async function updateUsage(profileName) {
   }
 }
 
+// Folders already considered this session, so opening files does not re-ask.
+const declaredChecked = new Set();
+
+/**
+ * Honour a git-remote rule or a checked-in .ccp.json when a folder opens.
+ *
+ * A rule is something you wrote locally, so it applies silently. A .ccp.json
+ * arrived inside someone else's repo -- it carries only a name, never
+ * credentials, but it does decide which of your accounts gets spent, so it is
+ * asked about once and the answer remembered.
+ */
+async function applyDeclared(folder) {
+  if (!folder || declaredChecked.has(folder)) return;
+  declaredChecked.add(folder);
+
+  let plan;
+  try {
+    plan = await runCliAsync(['apply', '--cwd', folder, '--dry-run', '--json'], { json: true });
+  } catch {
+    return;
+  }
+  if (!plan?.source || plan.alreadyBound) return;
+
+  if (plan.source === 'rule') {
+    try {
+      await runCliAsync(['apply', '--cwd', folder, '--yes']);
+      refresh();
+      output.appendLine(`applied rule ${plan.pattern} -> ${plan.profile} for ${folder}`);
+    } catch (err) {
+      output.appendLine(`rule apply failed: ${err.message}`);
+    }
+    return;
+  }
+
+  if (plan.approval === 'denied') return;
+  if (plan.approval !== 'approved') {
+    const choice = await vscode.window.showInformationMessage(
+      `This repo's .ccp.json asks to use the Claude account "${plan.profile}".`,
+      { modal: false, detail: 'The file holds only a name, never credentials.' },
+      'Use it',
+      'No',
+    );
+    if (choice !== 'Use it') {
+      if (choice === 'No') {
+        try {
+          await runCliAsync(['apply', '--cwd', folder, '--deny']);
+        } catch {
+          /* remembering the refusal is best effort */
+        }
+      }
+      return;
+    }
+  }
+
+  try {
+    await runCliAsync(['apply', '--cwd', folder, '--yes']);
+    refresh();
+    await offerRestart(plan.profile);
+  } catch (err) {
+    vscode.window.showErrorMessage(`Claude Profile: ${err.message}`);
+  }
+}
+
 function refresh() {
   if (!statusBar) return;
 
@@ -399,6 +462,7 @@ function refresh() {
   // Deliberately not awaited: the account name is already on screen, and the
   // percentage arrives when it arrives.
   void updateUsage(lastInfo.usesDefault || !lastInfo.bound ? 'default' : lastInfo.profile);
+  if (!lastInfo.bound) void applyDeclared(folder);
 }
 
 function paint() {

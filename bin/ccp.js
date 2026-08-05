@@ -5,6 +5,7 @@ import { doctor, explain } from '../src/commands/doctor.js';
 import { exec, printEnv, shell } from '../src/commands/exec.js';
 import { list } from '../src/commands/list.js';
 import { login, save } from '../src/commands/login.js';
+import { apply, ruleAdd, ruleList, ruleRemove, scan } from '../src/commands/rule.js';
 import { seal, unseal } from '../src/commands/seal.js';
 import { setup, teardown } from '../src/commands/setup.js';
 import { usage } from '../src/commands/usage.js';
@@ -43,6 +44,13 @@ ${c.bold('Projects')}
   ccp bindings              list every bound project
   ccp current               show which account this project uses
   ccp explain               show what the shim will do here, and why
+
+${c.bold('Binding by rule')}
+  ccp rule add <pat> <name> bind by git remote, e.g. "github.com/acme/*"
+  ccp rule ls               list rules, most specific first
+  ccp rule rm <pattern>     remove a rule
+  ccp apply                 bind this project from a rule or its .ccp.json
+  ccp scan [dir]            apply rules across every repo under a directory
 
 ${c.bold('Maintenance')}
   ccp sync-mcp              replicate MCP server logins across all stores
@@ -165,6 +173,32 @@ try {
 
     case 'bindings':
       listBindings();
+      break;
+
+    case 'rule': {
+      const sub = positional[0] ?? 'ls';
+      if (sub === 'add') ruleAdd(positional[1], positional[2]);
+      else if (sub === 'rm' || sub === 'remove') ruleRemove(positional[1]);
+      else if (sub === 'ls' || sub === 'list') ruleList();
+      else throw new Error(`unknown rule subcommand "${sub}"`);
+      break;
+    }
+
+    case 'apply':
+      await apply({
+        cwd,
+        yes: flag('yes'),
+        deny: flag('deny'),
+        dryRun: flag('dry-run'),
+        json,
+      });
+      break;
+
+    case 'scan':
+      await scan(positional[0] ?? cwd, {
+        depth: Number(option('depth') ?? 3),
+        yes: flag('yes'),
+      });
       break;
 
     case 'current':
