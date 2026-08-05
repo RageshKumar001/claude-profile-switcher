@@ -1,0 +1,6 @@
+# Normalise line endings in the repo so contributors on other platforms do not
+# see every file as modified. Working copies keep whatever their OS prefers.
+* text=auto
+
+*.png binary
+*.exe binary

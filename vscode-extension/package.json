@@ -1,0 +1,76 @@
+{
+  "name": "claude-profile-switcher",
+  "displayName": "Claude Profile Switcher",
+  "description": "Bind each project to its own Claude Code account, and switch from the status bar.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "private": true,
+  "icon": "icon.png",
+  "author": "RageshKumar001",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RageshKumar001/claude-profile-switcher.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RageshKumar001/claude-profile-switcher/issues"
+  },
+  "homepage": "https://github.com/RageshKumar001/claude-profile-switcher#readme",
+  "galleryBanner": {
+    "color": "#C4603F",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["claude", "claude code", "accounts", "profiles", "multi-account"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ccp.switchAccount",
+        "title": "Claude Profile: Switch Account for This Project"
+      },
+      {
+        "command": "ccp.addAccount",
+        "title": "Claude Profile: Add Account"
+      },
+      {
+        "command": "ccp.unbind",
+        "title": "Claude Profile: Use Default Account for This Project"
+      },
+      {
+        "command": "ccp.refresh",
+        "title": "Claude Profile: Refresh Status"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "ccp.switchAccount",
+          "when": "explorerResourceIsFolder",
+          "group": "7_modification"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Profile Switcher",
+      "properties": {
+        "ccp.cliPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Path to the ccp CLI entry point. Leave empty to read it from ~/.claude-profiles/install.json (written by `ccp setup`)."
+        },
+        "ccp.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Show the bound Claude account in the status bar."
+        }
+      }
+    }
+  }
+}

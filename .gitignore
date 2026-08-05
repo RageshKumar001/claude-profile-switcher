@@ -1,0 +1,17 @@
+node_modules/
+*.log
+*.tmp
+*.vsix
+
+# Build output -- the shim is compiled per machine by `ccp setup`, never shipped.
+shim/*.exe
+shim/*.pdb
+
+# Belt and braces: credential stores live in ~/.claude-profiles, but make it
+# impossible to commit one by accident if anyone ever copies it in here.
+.credentials.json
+credentials.dpapi
+store/
+bindings.json
+bindings.tsv
+install.json

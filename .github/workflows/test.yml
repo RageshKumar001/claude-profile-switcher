@@ -1,0 +1,45 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Windows-only by design: the shim is a Windows executable and every path
+    # this tool resolves is a Windows path.
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # No `npm ci`: this package has no dependencies, and there is no lockfile
+      # to install from. That is a feature worth keeping -- if this step ever
+      # becomes necessary, something has been added that should not have been.
+      - name: Assert no dependencies
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          if ($pkg.dependencies -or $pkg.devDependencies) {
+            Write-Error 'package.json gained dependencies -- this project ships with none'
+            exit 1
+          }
+
+      - name: Test
+        run: npm test
+
+      # The shim is compiled by the C# compiler that ships with Windows. If a
+      # runner image ever drops it, this is how we find out before users do.
+      - name: Build the shim
+        run: node scripts/build-shim.mjs

@@ -1,0 +1,50 @@
+{
+  "name": "claude-profile-switcher",
+  "version": "0.1.0",
+  "description": "Per-project Claude Code account binding for Windows. Each VS Code window runs the account bound to that project.",
+  "type": "module",
+  "bin": {
+    "ccp": "bin/ccp.js"
+  },
+  "author": "RageshKumar001",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RageshKumar001/claude-profile-switcher.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RageshKumar001/claude-profile-switcher/issues"
+  },
+  "homepage": "https://github.com/RageshKumar001/claude-profile-switcher#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "win32"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/build-shim.mjs || exit 0",
+    "setup": "node bin/ccp.js setup",
+    "build:shim": "node scripts/build-shim.mjs",
+    "build:icon": "node scripts/make-icon.mjs",
+    "install:extension": "node scripts/install-extension.mjs",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "files": [
+    "bin",
+    "src",
+    "scripts",
+    "shim",
+    "vscode-extension",
+    "assets",
+    "README.md"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "accounts",
+    "profiles",
+    "vscode"
+  ],
+  "license": "MIT",
+  "private": true
+}
