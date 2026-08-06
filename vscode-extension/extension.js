@@ -7,6 +7,19 @@ const path = require('node:path');
 const MANIFEST = path.join(os.homedir(), '.claude-profiles', 'install.json');
 const BINDINGS = path.join(os.homedir(), '.claude-profiles', 'bindings.json');
 
+/**
+ * How stale a cached quota figure may be, in seconds.
+ *
+ * Short, because a number you are looking at should be one you can act on --
+ * a stale percentage is worse than none. It costs little to keep it fresh:
+ * `/api/oauth/usage` is a plain read that spends no tokens. The cache exists
+ * only so a burst of editor changes does not become a burst of requests.
+ */
+const USAGE_MAX_AGE = '30';
+
+/** How often a focused window re-reads quota. Matched to USAGE_MAX_AGE. */
+const POLL_MS = 30_000;
+
 let statusBar;
 let output;
 
@@ -37,7 +50,43 @@ function activate(context) {
     /* status bar just will not auto-refresh */
   }
 
+  startPolling(context);
   refresh();
+}
+
+/**
+ * Keep the number on screen current without waiting for you to click something.
+ *
+ * Every other repaint is event-driven -- an editor change, a binding change --
+ * so a window left sitting on the chat panel showed the same percentage
+ * indefinitely, which is precisely when quota is moving. A shorter cache does
+ * not help if nothing asks for it.
+ */
+function startPolling(context) {
+  const timer = setInterval(() => {
+    // Background windows are not worth a request; focus catches them up.
+    if (vscode.window.state.focused) void tick();
+  }, POLL_MS);
+
+  context.subscriptions.push(
+    { dispose: () => clearInterval(timer) },
+    vscode.window.onDidChangeWindowState((state) => {
+      if (state.focused) void tick();
+    }),
+  );
+}
+
+/**
+ * The cheap half of refresh(): the two async lookups, no spawnSync.
+ *
+ * refresh() shells out to `ccp current` synchronously, which is fine once on an
+ * editor change but would stall the extension host if it ran on a timer.
+ */
+async function tick() {
+  const folder = activeFolder();
+  if (!folder || !lastInfo) return;
+  await updateUsage(lastInfo.usesDefault || !lastInfo.bound ? 'default' : lastInfo.profile);
+  await updateDrift(folder);
 }
 
 function deactivate() {}
@@ -184,7 +233,7 @@ async function switchAccount(resource) {
   // just means the list renders without them.
   let usageRows = [];
   try {
-    usageRows = await runCliAsync(['usage', '--json', '--max-age', '120'], { json: true });
+    usageRows = await runCliAsync(['usage', '--json', '--max-age', USAGE_MAX_AGE], { json: true });
   } catch {
     /* quota is optional context */
   }
@@ -388,7 +437,7 @@ function usageTooltip(profileName) {
 async function updateUsage(profileName) {
   if (!profileName) return;
   try {
-    const rows = await runCliAsync(['usage', profileName, '--json', '--max-age', '240'], {
+    const rows = await runCliAsync(['usage', profileName, '--json', '--max-age', USAGE_MAX_AGE], {
       json: true,
     });
     if (rows?.[0]?.usage) {
