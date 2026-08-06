@@ -425,7 +425,20 @@ function usageTooltip(profileName) {
   if (usage.fiveHour) parts.push(`Session (5h): ${usage.fiveHour.percent}%`);
   if (usage.sevenDay) parts.push(`Week (7d): ${usage.sevenDay.percent}%`);
   if (usage.opus) parts.push(`Opus (7d): ${usage.opus.percent}%`);
-  return parts.length ? `\n\n${parts.join('\n')}` : '';
+
+  // Say how old these figures are. The headline shows the worst window, which
+  // is usually the 7-day one, and that barely moves -- so a frozen status bar
+  // keeps looking plausible while the session figure beside it drifts badly.
+  // A timestamp makes that visible instead of something you have to suspect.
+  if (usage.fetchedAt) {
+    const seconds = Math.round((Date.now() - Date.parse(usage.fetchedAt)) / 1000);
+    parts.push(
+      Number.isFinite(seconds)
+        ? `\nUpdated ${seconds < 90 ? `${Math.max(seconds, 0)}s` : `${Math.round(seconds / 60)}m`} ago`
+        : '',
+    );
+  }
+  return parts.length ? `\n\n${parts.filter(Boolean).join('\n')}` : '';
 }
 
 /**
